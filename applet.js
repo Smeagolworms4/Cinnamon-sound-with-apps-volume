@@ -18,6 +18,178 @@ const Gtk = imports.gi.Gtk;
 const Util = imports.misc.util;
 ///@koutch Settings 
 
+function MyPopupSliderMenuItem() {
+    this._init.apply(this, arguments);
+}
+MyPopupSliderMenuItem.prototype = Object.create(PopupMenu.PopupSliderMenuItem.prototype);
+
+
+
+MyPopupSliderMenuItem.prototype.setMaxValue = function(value) {
+	this.maxValue = value;
+};
+
+
+//NR
+MyPopupSliderMenuItem.prototype._init = function(value) {
+	this.maxValue = 1;
+	
+    PopupMenu.PopupBaseMenuItem.prototype._init.call(this, { activate: false });
+
+    this.actor.connect('key-press-event', Lang.bind(this, this._onKeyPressEvent));
+
+    if (isNaN(value))
+        // Avoid spreading NaNs around
+        throw TypeError('The slider value must be a number');
+    this._value = Math.max(Math.min(value, this.maxValue), 0);
+
+    this._slider = new St.DrawingArea({ style_class: 'popup-slider-menu-item', reactive: true });
+    this.addActor(this._slider, { span: -1, expand: true });
+    this._slider.connect('repaint', Lang.bind(this, this._sliderRepaint));
+    this.actor.connect('button-press-event', Lang.bind(this, this._startDragging));
+    this.actor.connect('scroll-event', Lang.bind(this, this._onScrollEvent));
+
+    this._releaseId = this._motionId = 0;
+    this._dragging = false;
+};
+
+//NR
+MyPopupSliderMenuItem.prototype.setValue = function(value) {
+	
+    if (isNaN(value))
+        throw TypeError('The slider value must be a number');
+
+    this._value = Math.max(Math.min(value, this.maxValue), 0);
+    this._slider.queue_repaint();
+};
+
+// NR
+MyPopupSliderMenuItem.prototype._sliderRepaint = function(area) {
+    let cr = area.get_context();
+    let themeNode = area.get_theme_node();
+    let [width, height] = area.get_surface_size();
+
+    let handleRadius = themeNode.get_length('-slider-handle-radius');
+
+    let sliderWidth = width - 2 * handleRadius;
+    let sliderHeight = themeNode.get_length('-slider-height');
+
+    let sliderBorderWidth = themeNode.get_length('-slider-border-width');
+
+    let sliderBorderColor = themeNode.get_color('-slider-border-color');
+    let sliderColor = themeNode.get_color('-slider-background-color');
+
+    let sliderActiveBorderColor = themeNode.get_color('-slider-active-border-color');
+    let sliderActiveColor = themeNode.get_color('-slider-active-background-color');
+
+    cr.setSourceRGBA (
+        sliderActiveColor.red / 255,
+        sliderActiveColor.green / 255,
+        sliderActiveColor.blue / 255,
+        sliderActiveColor.alpha / 255);
+    cr.rectangle(handleRadius, (height - sliderHeight) / 2, sliderWidth * this._value / this.maxValue, sliderHeight);
+    cr.fillPreserve();
+    cr.setSourceRGBA (
+        sliderActiveBorderColor.red / 255,
+        sliderActiveBorderColor.green / 255,
+        sliderActiveBorderColor.blue / 255,
+        sliderActiveBorderColor.alpha / 255);
+    cr.setLineWidth(sliderBorderWidth);
+    cr.stroke();
+
+    cr.setSourceRGBA (
+        sliderColor.red / 255,
+        sliderColor.green / 255,
+        sliderColor.blue / 255,
+        sliderColor.alpha / 255);
+    cr.rectangle(handleRadius + sliderWidth * this._value / this.maxValue, (height - sliderHeight) / 2, sliderWidth * (1 - this._value / this.maxValue), sliderHeight);
+    cr.fillPreserve();
+    cr.setSourceRGBA (
+        sliderBorderColor.red / 255,
+        sliderBorderColor.green / 255,
+        sliderBorderColor.blue / 255,
+        sliderBorderColor.alpha / 255);
+    cr.setLineWidth(sliderBorderWidth);
+    cr.stroke();
+
+    let handleY = height / 2;
+    let handleX = handleRadius + (width - 2 * handleRadius) * this._value / this.maxValue;
+
+    let color = themeNode.get_foreground_color();
+    cr.setSourceRGBA (
+        color.red / 255,
+        color.green / 255,
+        color.blue / 255,
+        color.alpha / 255);
+    cr.arc(handleX, handleY, handleRadius, 0, 2 * Math.PI);
+    cr.fill();
+};
+
+//NR
+MyPopupSliderMenuItem.prototype._onScrollEvent = function (actor, event) {
+    let direction = event.get_scroll_direction();
+
+    if (direction == Clutter.ScrollDirection.DOWN) {
+        this._value = Math.max(this.maxValue, this._value - SLIDER_SCROLL_STEP);
+    }
+    else if (direction == Clutter.ScrollDirection.UP) {
+        this._value = Math.min(this.maxValue, this._value + SLIDER_SCROLL_STEP);
+    }
+	
+    this._slider.queue_repaint();
+    this.emit('value-changed', this._value);
+};
+
+// NR
+MyPopupSliderMenuItem.prototype._moveHandle = function(absX, absY) {
+    let relX, relY, sliderX, sliderY;
+    [sliderX, sliderY] = this._slider.get_transformed_position();
+    relX = absX - sliderX;
+    relY = absY - sliderY;
+
+    let width = this._slider.width;
+    let handleRadius = this._slider.get_theme_node().get_length('-slider-handle-radius');
+
+    let newvalue;
+    if (relX < handleRadius)
+        newvalue = 0;
+    else if (relX > width - handleRadius)
+        newvalue = this.maxValue;
+    else
+        newvalue = (relX - handleRadius) / (width - 2 * handleRadius) * this.maxValue;
+    
+    if (this.oldValue < newvalue) {
+		if (newvalue > 1  && newvalue < 1.17) {
+			newvalue = 1;
+		} else {
+    		this.oldValue = newvalue;
+		}
+    } else {
+    	this.oldValue = newvalue;
+    }
+    
+    
+    this._value = newvalue;
+    this._slider.queue_repaint();
+    this.emit('value-changed', this._value);
+};
+
+// NR
+MyPopupSliderMenuItem.prototype._onKeyPressEvent = function (actor, event) {
+    let key = event.get_key_symbol();
+    if (key == Clutter.KEY_Right || key == Clutter.KEY_Left) {
+        let delta = key == Clutter.KEY_Right ? 0.1 : -0.1;
+        this._value = Math.max(0, Math.min(this._value + delta, this.maxValue));
+        this._slider.queue_repaint();
+        this.emit('value-changed', this._value);
+        this.emit('drag-end');
+        return true;
+    }
+    return false;
+};
+
+
+
 const PropIFace = {
     name: 'org.freedesktop.DBus.Properties',
     signals: [{ name: 'PropertiesChanged',
@@ -1071,7 +1243,8 @@ MyApplet.prototype = {
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this._outputTitle = new TextImageMenuItem(_("Volume"), "audio-volume-high", false, "right", "sound-volume-menu-item");
-        this._outputSlider = new PopupMenu.PopupSliderMenuItem(0);
+        this._outputSlider = new MyPopupSliderMenuItem(0);
+        this._outputSlider.setMaxValue (1.5);
         this._outputSlider.connect('value-changed', Lang.bind(this, this._sliderChanged, '_output'));
         this._outputSlider.connect('drag-end', Lang.bind(this, this._notifyVolumeChange));
         this.menu.addMenuItem(this._outputTitle);
@@ -1084,7 +1257,8 @@ MyApplet.prototype = {
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this._inputTitle = new PopupMenu.PopupMenuItem(_("Microphone"), { reactive: false });
-        this._inputSlider = new PopupMenu.PopupSliderMenuItem(0);
+        this._inputSlider = new MyPopupSliderMenuItem(0);
+        this._inputSlider.setMaxValue (1.5);
         this._inputSlider.connect('value-changed', Lang.bind(this, this._sliderChanged, '_input'));
         this._inputSlider.connect('drag-end', Lang.bind(this, this._notifyVolumeChange));
         this.menu.addMenuItem(this._inputTitle);
@@ -1328,7 +1502,8 @@ MyApplet.prototype = {
 			menuItem._icon = new St.Icon({ icon_name: menuItem._icon_name, icon_type: St.IconType.FULLCOLOR, style_class: 'popup-menu-icon' });
 			menuItem.addActor(menuItem._icon);
 
-            let sink_inputSlider = new PopupMenu.PopupSliderMenuItem(sink_input.volume / this._volumeMax);
+            let sink_inputSlider = new MyPopupSliderMenuItem(sink_input.volume / this._volumeMax);
+            sink_inputSlider.setMaxValue (1.5);
 			sink_inputSlider.connect('value-changed', Lang.bind(this, function(slider, value ) {			
 		        let volume = value * this._volumeMax;
 				let prev_muted = sink_input.is_muted;
